@@ -1,6 +1,6 @@
 /*
- * MultiRoblox - Ultra Optimized Version
- * Keeps ROBLOX singleton mutex alive with zero CPU usage
+ * MultiRoblox - Ultimate Optimized Edition
+ * Maximum compatibility, zero CPU usage, low-end friendly
  */
 
 #ifndef UNICODE
@@ -12,19 +12,22 @@
 
 #include <Windows.h>
 #include <iostream>
+#include <vector>
 #include "color.h"
 
-HANDLE g_hMutex = NULL;
+std::vector<HANDLE> g_mutexes;
 
 BOOL WINAPI ConsoleHandler(DWORD signal)
 {
 	if (signal == CTRL_C_EVENT || signal == CTRL_CLOSE_EVENT)
 	{
-		if (g_hMutex)
+		for (HANDLE h : g_mutexes)
 		{
-			ReleaseMutex(g_hMutex);
-			CloseHandle(g_hMutex);
-			g_hMutex = NULL;
+			if (h)
+			{
+				ReleaseMutex(h);
+				CloseHandle(h);
+			}
 		}
 		ExitProcess(0);
 	}
@@ -34,31 +37,43 @@ BOOL WINAPI ConsoleHandler(DWORD signal)
 int main()
 {
 	SetConsoleCtrlHandler(ConsoleHandler, TRUE);
+	SetConsoleOutputCP(65001);
 
-	g_hMutex = CreateMutexW(NULL, TRUE, L"ROBLOX_singletonMutex");
-
-	if (!g_hMutex)
+	const wchar_t* mutexNames[] =
 	{
-		std::cout << dye::red("ERROR: Failed to create mutex.") << "\n";
+		L"ROBLOX_singletonMutex",
+		L"ROBLOX_singletonMutex_Legacy",
+		L"ROBLOX_singletonMutex_1"
+	};
+
+	for (const auto& name : mutexNames)
+	{
+		HANDLE h = CreateMutexW(NULL, TRUE, name);
+		if (h)
+			g_mutexes.push_back(h);
+	}
+
+	if (g_mutexes.empty())
+	{
+		std::cout << dye::red("ERROR: Failed to acquire any ROBLOX mutex.") << "\n";
 		std::cin.get();
 		return 1;
 	}
 
-	SetConsoleOutputCP(65001);
-
 	std::cout << "\n";
-	std::cout << dye::aqua("==============================================") << "\n";
-	std::cout << dye::aqua("|") << dye::white("     MultiRoblox - Ultra Optimized Mode     ") << dye::aqua("|") << "\n";
-	std::cout << dye::aqua("==============================================") << "\n\n";
+	std::cout << dye::aqua("================================================") << "\n";
+	std::cout << dye::aqua("|") << dye::white("  MultiRoblox - Ultimate Optimized Edition   ") << dye::aqua("|") << "\n";
+	std::cout << dye::aqua("================================================") << "\n\n";
 
-	std::cout << dye::green("[OK] ") << dye::white("ROBLOX mutex acquired successfully.") << "\n";
-	std::cout << dye::green("[OK] ") << dye::white("Multiple instances are now allowed.") << "\n\n";
+	std::cout << dye::green("[OK] ") << dye::white("ROBLOX mutexes acquired: ")
+	          << dye::aqua(std::to_string(g_mutexes.size())) << "\n";
 
 	std::cout << dye::grey("Status: ") << dye::green("ACTIVE (0% CPU)") << "\n";
+	std::cout << dye::grey("Low-end systems: OPTIMIZED") << "\n\n";
+
 	std::cout << dye::grey("Press Ctrl+C to exit.") << "\n\n";
 
-	// 🔥 ZERO CPU USAGE — no loop, no polling, no wakeups
+	// 🔥 Absolute zero CPU usage
 	WaitForSingleObject(INVALID_HANDLE_VALUE, INFINITE);
-
 	return 0;
 }

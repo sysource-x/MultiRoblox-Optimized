@@ -1,195 +1,97 @@
-/*
- * MultiRoblox - Ultimate Optimized Edition
- * CLI Core Foundation (base for tray & GUI)
- */
-
-#ifndef UNICODE
 #define UNICODE
-#endif
-#ifndef _UNICODE
 #define _UNICODE
-#endif
 
-#include <Windows.h>
-#include <TlHelp32.h>
-#include <iostream>
-#include <vector>
-#include <string>
-#include "color.h"
+#include <windows.h>
+#include <shellapi.h>
 
-// --------------------------------------------------
-// App options
-// --------------------------------------------------
-struct AppOptions
+#pragma comment(lib, "shell32.lib")
+
+HANDLE g_hMutex = NULL;
+NOTIFYICONDATA nid = {};
+
+// Window procedure
+LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
-	bool status = false;
-	bool silent = false;
-	bool once = false;
-};
+    if (msg == WM_DESTROY)
+    {
+        if (g_hMutex)
+        {
+            ReleaseMutex(g_hMutex);
+            CloseHandle(g_hMutex);
+        }
 
-// --------------------------------------------------
-// Globals
-// --------------------------------------------------
-HANDLE g_SelfMutex = NULL;
-std::vector<HANDLE> g_RobloxMutexes;
+        Shell_NotifyIcon(NIM_DELETE, &nid);
+        PostQuitMessage(0);
+        return 0;
+    }
 
-// --------------------------------------------------
-// Parse CLI arguments
-// --------------------------------------------------
-AppOptions ParseArgs(int argc, char* argv[])
-{
-	AppOptions opts;
+    if (msg == WM_USER + 1 && lParam == WM_RBUTTONUP)
+    {
+        HMENU menu = CreatePopupMenu();
+        AppendMenuW(menu, MF_STRING, 1, L"Exit");
 
-	for (int i = 1; i < argc; ++i)
-	{
-		std::string arg = argv[i];
+        POINT pt;
+        GetCursorPos(&pt);
+        SetForegroundWindow(hwnd);
 
-		if (arg == "--status") opts.status = true;
-		else if (arg == "--silent") opts.silent = true;
-		else if (arg == "--once") opts.once = true;
-	}
+        int cmd = TrackPopupMenu(
+            menu,
+            TPM_RETURNCMD | TPM_NONOTIFY,
+            pt.x, pt.y,
+            0, hwnd, NULL
+        );
 
-	return opts;
+        if (cmd == 1)
+            DestroyWindow(hwnd);
+
+        DestroyMenu(menu);
+    }
+
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
-// --------------------------------------------------
-// Optional diagnostic
-// --------------------------------------------------
-int CountRobloxInstances()
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int)
 {
-	int count = 0;
-	HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-	if (snapshot == INVALID_HANDLE_VALUE)
-		return 0;
+    // Acquire Roblox mutex
+    g_hMutex = CreateMutexW(NULL, TRUE, L"ROBLOX_singletonMutex");
+    if (!g_hMutex)
+        return 0;
 
-	PROCESSENTRY32W entry{};
-	entry.dwSize = sizeof(entry);
+    // Register hidden window
+    WNDCLASSW wc = {};
+    wc.lpfnWndProc = WndProc;
+    wc.hInstance = hInstance;
+    wc.lpszClassName = L"MultiRobloxTray";
 
-	if (Process32FirstW(snapshot, &entry))
-	{
-		do
-		{
-			if (wcsstr(entry.szExeFile, L"Roblox") != nullptr)
-				count++;
-		} while (Process32NextW(snapshot, &entry));
-	}
+    RegisterClassW(&wc);
 
-	CloseHandle(snapshot);
-	return count;
-}
+    HWND hwnd = CreateWindowExW(
+        0,
+        wc.lpszClassName,
+        L"",
+        WS_OVERLAPPEDWINDOW,
+        0, 0, 0, 0,
+        NULL, NULL, hInstance, NULL
+    );
 
-// --------------------------------------------------
-// Acquire Roblox mutex (backend only)
-// --------------------------------------------------
-void AcquireRobloxMutex(const wchar_t* name)
-{
-	HANDLE h = CreateMutexW(NULL, TRUE, name);
-	if (h)
-		g_RobloxMutexes.push_back(h);
-}
+    // Tray icon
+    nid.cbSize = sizeof(NOTIFYICONDATA);
+    nid.hWnd = hwnd;
+    nid.uID = 1;
+    nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+    nid.uCallbackMessage = WM_USER + 1;
+    nid.hIcon = LoadIconW(NULL, IDI_APPLICATION);
+    wcscpy_s(nid.szTip, L"MultiRoblox (Active)");
 
-// --------------------------------------------------
-// Cleanup
-// --------------------------------------------------
-void CleanupAndExit()
-{
-	for (HANDLE h : g_RobloxMutexes)
-	{
-		if (h)
-		{
-			ReleaseMutex(h);
-			CloseHandle(h);
-		}
-	}
-	g_RobloxMutexes.clear();
+    Shell_NotifyIconW(NIM_ADD, &nid);
 
-	if (g_SelfMutex)
-	{
-		ReleaseMutex(g_SelfMutex);
-		CloseHandle(g_SelfMutex);
-	}
+    // Message loop (idle = 0% CPU)
+    MSG msg;
+    while (GetMessageW(&msg, NULL, 0, 0))
+    {
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+    }
 
-	ExitProcess(0);
-}
-
-// --------------------------------------------------
-// Console handler
-// --------------------------------------------------
-BOOL WINAPI ConsoleHandler(DWORD signal)
-{
-	if (signal == CTRL_C_EVENT || signal == CTRL_CLOSE_EVENT)
-	{
-		CleanupAndExit();
-	}
-	return TRUE;
-}
-
-// --------------------------------------------------
-// Entry point
-// --------------------------------------------------
-int main(int argc, char* argv[])
-{
-	SetConsoleCtrlHandler(ConsoleHandler, TRUE);
-	SetConsoleOutputCP(65001);
-
-	AppOptions opts = ParseArgs(argc, argv);
-
-	// ----------------------------------------------
-	// Ensure single MultiRoblox instance
-	// ----------------------------------------------
-	g_SelfMutex = CreateMutexW(NULL, TRUE, L"MultiRoblox_Internal_Singleton");
-	if (GetLastError() == ERROR_ALREADY_EXISTS)
-	{
-		if (opts.status && !opts.silent)
-			std::cout << "MultiRoblox is already running.\n";
-		return 0;
-	}
-
-	// ----------------------------------------------
-	// Acquire Roblox mutexes
-	// ----------------------------------------------
-	const wchar_t* robloxMutexes[] =
-	{
-		L"ROBLOX_singletonMutex",
-		L"RobloxPlayerSingletonMutex",
-		L"RobloxAppSingletonMutex"
-	};
-
-	for (const auto& name : robloxMutexes)
-		AcquireRobloxMutex(name);
-
-	if (g_RobloxMutexes.empty())
-	{
-		if (!opts.silent)
-			std::cout << "Failed to enable multi-instance mode.\n";
-		return 1;
-	}
-
-	// ----------------------------------------------
-	// UI
-	// ----------------------------------------------
-	if (!opts.silent)
-		std::cout << "MultiRoblox active. Multi-instance enabled.\n";
-
-	if (opts.status && !opts.silent)
-	{
-		std::cout << "Roblox instances: "
-		          << CountRobloxInstances() << "\n";
-		std::cout << "CPU usage: 0%\n";
-	}
-
-	// ----------------------------------------------
-	// Exit immediately if --once
-	// ----------------------------------------------
-	if (opts.once)
-	{
-		CleanupAndExit();
-		return 0;
-	}
-
-	// ----------------------------------------------
-	// Idle
-	// ----------------------------------------------
-	Sleep(INFINITE);
-	return 0;
+    return 0;
 }

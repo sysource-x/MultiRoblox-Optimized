@@ -1,7 +1,6 @@
 /*
  * MultiRoblox - Ultimate Optimized Edition
- * Maximum compatibility with modern Roblox launchers
- * Zero CPU usage, low-end friendly
+ * Robust core: instance detection + safe singleton
  */
 
 #ifndef UNICODE
@@ -12,69 +11,137 @@
 #endif
 
 #include <Windows.h>
+#include <TlHelp32.h>
 #include <iostream>
 #include <vector>
+#include <string>
 #include "color.h"
 
-std::vector<HANDLE> g_Mutexes;
+// Prevent multiple MultiRoblox instances
+HANDLE g_SelfMutex = NULL;
 
-BOOL WINAPI ConsoleHandler(DWORD signal)
+// Roblox mutexes
+std::vector<HANDLE> g_RobloxMutexes;
+
+// --------------------------------------------------
+// Count Roblox instances
+// --------------------------------------------------
+int CountRobloxInstances()
 {
-	if (signal == CTRL_C_EVENT || signal == CTRL_CLOSE_EVENT)
+	int count = 0;
+	HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+	if (snapshot == INVALID_HANDLE_VALUE)
+		return 0;
+
+	PROCESSENTRY32W entry{};
+	entry.dwSize = sizeof(entry);
+
+	if (Process32FirstW(snapshot, &entry))
 	{
-		for (HANDLE h : g_Mutexes)
+		do
 		{
-			if (h)
-			{
-				ReleaseMutex(h);
-				CloseHandle(h);
-			}
-		}
-		g_Mutexes.clear();
-		std::cout << "\n" << dye::yellow("MultiRoblox shutting down. Mutexes released.") << "\n";
-		ExitProcess(0);
+			if (_wcsicmp(entry.szExeFile, L"RobloxPlayerBeta.exe") == 0)
+				count++;
+		} while (Process32NextW(snapshot, &entry));
 	}
-	return TRUE;
+
+	CloseHandle(snapshot);
+	return count;
 }
 
-void AcquireMutex(const wchar_t* name)
+// --------------------------------------------------
+// Acquire Roblox mutex
+// --------------------------------------------------
+void AcquireRobloxMutex(const wchar_t* name)
 {
 	HANDLE h = CreateMutexW(NULL, TRUE, name);
 	if (h)
 	{
-		g_Mutexes.push_back(h);
+		g_RobloxMutexes.push_back(h);
 		std::wcout << L"[OK] Acquired mutex: " << name << L"\n";
-	}
-	else
-	{
-		std::wcout << L"[FAIL] Could not acquire mutex: " << name << L"\n";
 	}
 }
 
+// --------------------------------------------------
+// Cleanup
+// --------------------------------------------------
+void CleanupAndExit()
+{
+	for (HANDLE h : g_RobloxMutexes)
+	{
+		if (h)
+		{
+			ReleaseMutex(h);
+			CloseHandle(h);
+		}
+	}
+	g_RobloxMutexes.clear();
+
+	if (g_SelfMutex)
+	{
+		ReleaseMutex(g_SelfMutex);
+		CloseHandle(g_SelfMutex);
+	}
+
+	std::cout << dye::yellow("\nMultiRoblox terminated safely.") << "\n";
+	ExitProcess(0);
+}
+
+// --------------------------------------------------
+// Console handler
+// --------------------------------------------------
+BOOL WINAPI ConsoleHandler(DWORD signal)
+{
+	if (signal == CTRL_C_EVENT || signal == CTRL_CLOSE_EVENT)
+	{
+		CleanupAndExit();
+	}
+	return TRUE;
+}
+
+// --------------------------------------------------
+// Entry point
+// --------------------------------------------------
 int main()
 {
 	SetConsoleCtrlHandler(ConsoleHandler, TRUE);
 	SetConsoleOutputCP(65001);
 
-	// Known Roblox mutexes (official + modern launchers)
-	const wchar_t* mutexNames[] =
+	// ----------------------------------------------
+	// Ensure single MultiRoblox instance
+	// ----------------------------------------------
+	g_SelfMutex = CreateMutexW(NULL, TRUE, L"MultiRoblox_Internal_Singleton");
+	if (GetLastError() == ERROR_ALREADY_EXISTS)
+	{
+		std::cout << dye::yellow("MultiRoblox is already running.") << "\n";
+		std::cout << dye::grey("Only one instance is allowed.") << "\n";
+		return 0;
+	}
+
+	// ----------------------------------------------
+	// Acquire Roblox mutexes
+	// ----------------------------------------------
+	const wchar_t* robloxMutexes[] =
 	{
 		L"ROBLOX_singletonMutex",
 		L"RobloxPlayerSingletonMutex",
 		L"RobloxAppSingletonMutex"
 	};
 
-	for (const auto& name : mutexNames)
-	{
-		AcquireMutex(name);
-	}
+	for (const auto& name : robloxMutexes)
+		AcquireRobloxMutex(name);
 
-	if (g_Mutexes.empty())
+	if (g_RobloxMutexes.empty())
 	{
-		std::cout << dye::red("ERROR: Failed to acquire any Roblox mutex.") << "\n";
+		std::cout << dye::red("ERROR: Failed to acquire Roblox mutexes.") << "\n";
 		std::cin.get();
 		return 1;
 	}
+
+	// ----------------------------------------------
+	// UI
+	// ----------------------------------------------
+	int instances = CountRobloxInstances();
 
 	std::cout << "\n";
 	std::cout << dye::aqua("========================================================") << "\n";
@@ -82,17 +149,20 @@ int main()
 	std::cout << dye::aqua("========================================================") << "\n\n";
 
 	std::cout << dye::green("[OK] ")
-	          << dye::white("Total mutexes acquired: ")
-	          << dye::aqua(std::to_string(g_Mutexes.size())) << "\n";
+	          << dye::white("Roblox mutexes acquired: ")
+	          << dye::aqua(std::to_string(g_RobloxMutexes.size())) << "\n";
+
+	std::cout << dye::green("[OK] ")
+	          << dye::white("Roblox instances detected: ")
+	          << dye::aqua(std::to_string(instances)) << "\n";
 
 	std::cout << dye::grey("Status: ") << dye::green("ACTIVE") << "\n";
-	std::cout << dye::grey("CPU Usage: ") << dye::green("0% (Idle Wait)") << "\n";
-	std::cout << dye::grey("Compatibility: ") << dye::green("Official, Fishstrap, Bloxstrap") << "\n\n";
-
+	std::cout << dye::grey("CPU Usage: ") << dye::green("0%") << "\n";
 	std::cout << dye::grey("Press Ctrl + C to exit.") << "\n\n";
 
-	// Zero CPU usage – correct infinite sleep
+	// ----------------------------------------------
+	// Zero CPU idle
+	// ----------------------------------------------
 	Sleep(INFINITE);
-
 	return 0;
 }

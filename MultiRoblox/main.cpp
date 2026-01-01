@@ -3,13 +3,65 @@
 
 #include <windows.h>
 #include <shellapi.h>
+#include <tlhelp32.h>
 
 #pragma comment(lib, "shell32.lib")
 
 HANDLE g_hMutex = NULL;
-NOTIFYICONDATA nid = {};
+NOTIFYICONDATAW g_nid = {};
+HWND g_hwnd = NULL;
 
+// ===============================
+// Count Roblox instances safely
+// ===============================
+int CountRobloxInstances()
+{
+    int count = 0;
+
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE)
+        return 0;
+
+    PROCESSENTRY32W entry;
+    entry.dwSize = sizeof(entry);
+
+    if (Process32FirstW(snapshot, &entry))
+    {
+        do
+        {
+            if (_wcsicmp(entry.szExeFile, L"RobloxPlayerBeta.exe") == 0)
+            {
+                count++;
+            }
+        } while (Process32NextW(snapshot, &entry));
+    }
+
+    CloseHandle(snapshot);
+    return count;
+}
+
+// ===============================
+// Update tray tooltip text
+// ===============================
+void UpdateTrayTooltip()
+{
+    int count = CountRobloxInstances();
+
+    wchar_t tooltip[128];
+    if (count == 0)
+        wcscpy_s(tooltip, L"MultiRoblox (no instances)");
+    else if (count == 1)
+        wcscpy_s(tooltip, L"MultiRoblox (1 instance)");
+    else
+        swprintf_s(tooltip, L"MultiRoblox (%d instances)", count);
+
+    wcscpy_s(g_nid.szTip, tooltip);
+    Shell_NotifyIconW(NIM_MODIFY, &g_nid);
+}
+
+// ===============================
 // Window procedure
+// ===============================
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     if (msg == WM_DESTROY)
@@ -20,7 +72,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             CloseHandle(g_hMutex);
         }
 
-        Shell_NotifyIcon(NIM_DELETE, &nid);
+        Shell_NotifyIconW(NIM_DELETE, &g_nid);
         PostQuitMessage(0);
         return 0;
     }
@@ -50,6 +102,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
+// ===============================
+// Entry point (Tray App)
+// ===============================
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int)
 {
     // Acquire Roblox mutex
@@ -61,11 +116,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int)
     WNDCLASSW wc = {};
     wc.lpfnWndProc = WndProc;
     wc.hInstance = hInstance;
-    wc.lpszClassName = L"MultiRobloxTray";
+    wc.lpszClassName = L"MultiRobloxTrayClass";
 
     RegisterClassW(&wc);
 
-    HWND hwnd = CreateWindowExW(
+    g_hwnd = CreateWindowExW(
         0,
         wc.lpszClassName,
         L"",
@@ -74,24 +129,32 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int)
         NULL, NULL, hInstance, NULL
     );
 
-    // Tray icon
-    nid.cbSize = sizeof(NOTIFYICONDATA);
-    nid.hWnd = hwnd;
-    nid.uID = 1;
-    nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
-    nid.uCallbackMessage = WM_USER + 1;
-    nid.hIcon = LoadIconW(NULL, IDI_APPLICATION);
-    wcscpy_s(nid.szTip, L"MultiRoblox (Active)");
+    // Setup tray icon
+    g_nid.cbSize = sizeof(NOTIFYICONDATAW);
+    g_nid.hWnd = g_hwnd;
+    g_nid.uID = 1;
+    g_nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+    g_nid.uCallbackMessage = WM_USER + 1;
+    g_nid.hIcon = LoadIconW(NULL, IDI_APPLICATION);
 
-    Shell_NotifyIconW(NIM_ADD, &nid);
+    wcscpy_s(g_nid.szTip, L"MultiRoblox");
 
-    // Message loop (idle = 0% CPU)
+    Shell_NotifyIconW(NIM_ADD, &g_nid);
+
+    // Timer to refresh status every 2 seconds
+    SetTimer(g_hwnd, 1, 2000, NULL);
+
     MSG msg;
     while (GetMessageW(&msg, NULL, 0, 0))
     {
+        if (msg.message == WM_TIMER)
+        {
+            UpdateTrayTooltip();
+        }
+
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
 
     return 0;
-}
+}feat(tray): show Roblox instance count in tray tooltip

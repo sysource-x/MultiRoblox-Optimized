@@ -1,6 +1,6 @@
 /*
  * MultiRoblox - Ultimate Optimized Edition
- * Stealth core with optional diagnostic mode (--status)
+ * CLI Core Foundation (base for tray & GUI)
  */
 
 #ifndef UNICODE
@@ -17,14 +17,43 @@
 #include <string>
 #include "color.h"
 
-// Prevent multiple MultiRoblox instances
-HANDLE g_SelfMutex = NULL;
+// --------------------------------------------------
+// App options
+// --------------------------------------------------
+struct AppOptions
+{
+	bool status = false;
+	bool silent = false;
+	bool once = false;
+};
 
-// Roblox mutex handles (hidden backend)
+// --------------------------------------------------
+// Globals
+// --------------------------------------------------
+HANDLE g_SelfMutex = NULL;
 std::vector<HANDLE> g_RobloxMutexes;
 
 // --------------------------------------------------
-// Optional: Count Roblox instances (diagnostic only)
+// Parse CLI arguments
+// --------------------------------------------------
+AppOptions ParseArgs(int argc, char* argv[])
+{
+	AppOptions opts;
+
+	for (int i = 1; i < argc; ++i)
+	{
+		std::string arg = argv[i];
+
+		if (arg == "--status") opts.status = true;
+		else if (arg == "--silent") opts.silent = true;
+		else if (arg == "--once") opts.once = true;
+	}
+
+	return opts;
+}
+
+// --------------------------------------------------
+// Optional diagnostic
 // --------------------------------------------------
 int CountRobloxInstances()
 {
@@ -40,7 +69,6 @@ int CountRobloxInstances()
 	{
 		do
 		{
-			// Generic detection (works with Fishstrap/Bloxstrap)
 			if (wcsstr(entry.szExeFile, L"Roblox") != nullptr)
 				count++;
 		} while (Process32NextW(snapshot, &entry));
@@ -51,7 +79,7 @@ int CountRobloxInstances()
 }
 
 // --------------------------------------------------
-// Acquire Roblox mutex (silent)
+// Acquire Roblox mutex (backend only)
 // --------------------------------------------------
 void AcquireRobloxMutex(const wchar_t* name)
 {
@@ -104,14 +132,7 @@ int main(int argc, char* argv[])
 	SetConsoleCtrlHandler(ConsoleHandler, TRUE);
 	SetConsoleOutputCP(65001);
 
-	bool statusMode = false;
-
-	// Parse arguments
-	for (int i = 1; i < argc; ++i)
-	{
-		if (std::string(argv[i]) == "--status")
-			statusMode = true;
-	}
+	AppOptions opts = ParseArgs(argc, argv);
 
 	// ----------------------------------------------
 	// Ensure single MultiRoblox instance
@@ -119,13 +140,13 @@ int main(int argc, char* argv[])
 	g_SelfMutex = CreateMutexW(NULL, TRUE, L"MultiRoblox_Internal_Singleton");
 	if (GetLastError() == ERROR_ALREADY_EXISTS)
 	{
-		if (statusMode)
+		if (opts.status && !opts.silent)
 			std::cout << "MultiRoblox is already running.\n";
 		return 0;
 	}
 
 	// ----------------------------------------------
-	// Acquire Roblox mutexes (hidden)
+	// Acquire Roblox mutexes
 	// ----------------------------------------------
 	const wchar_t* robloxMutexes[] =
 	{
@@ -139,24 +160,35 @@ int main(int argc, char* argv[])
 
 	if (g_RobloxMutexes.empty())
 	{
-		std::cout << "Failed to enable multi-instance mode.\n";
+		if (!opts.silent)
+			std::cout << "Failed to enable multi-instance mode.\n";
 		return 1;
 	}
 
 	// ----------------------------------------------
 	// UI
 	// ----------------------------------------------
-	std::cout << "MultiRoblox active. Multi-instance enabled.\n";
+	if (!opts.silent)
+		std::cout << "MultiRoblox active. Multi-instance enabled.\n";
 
-	if (statusMode)
+	if (opts.status && !opts.silent)
 	{
-		int instances = CountRobloxInstances();
-		std::cout << "Roblox instances detected: " << instances << "\n";
+		std::cout << "Roblox instances: "
+		          << CountRobloxInstances() << "\n";
 		std::cout << "CPU usage: 0%\n";
 	}
 
 	// ----------------------------------------------
-	// Idle (zero CPU)
+	// Exit immediately if --once
+	// ----------------------------------------------
+	if (opts.once)
+	{
+		CleanupAndExit();
+		return 0;
+	}
+
+	// ----------------------------------------------
+	// Idle
 	// ----------------------------------------------
 	Sleep(INFINITE);
 	return 0;

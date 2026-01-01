@@ -1,6 +1,7 @@
 /*
  * MultiRoblox - Ultimate Optimized Edition
- * Maximum compatibility, zero CPU usage, low-end friendly
+ * Maximum compatibility with modern Roblox launchers
+ * Zero CPU usage, low-end friendly
  */
 
 #ifndef UNICODE
@@ -15,13 +16,13 @@
 #include <vector>
 #include "color.h"
 
-std::vector<HANDLE> g_mutexes;
+std::vector<HANDLE> g_Mutexes;
 
 BOOL WINAPI ConsoleHandler(DWORD signal)
 {
 	if (signal == CTRL_C_EVENT || signal == CTRL_CLOSE_EVENT)
 	{
-		for (HANDLE h : g_mutexes)
+		for (HANDLE h : g_Mutexes)
 		{
 			if (h)
 			{
@@ -29,9 +30,25 @@ BOOL WINAPI ConsoleHandler(DWORD signal)
 				CloseHandle(h);
 			}
 		}
+		g_Mutexes.clear();
+		std::cout << "\n" << dye::yellow("MultiRoblox shutting down. Mutexes released.") << "\n";
 		ExitProcess(0);
 	}
 	return TRUE;
+}
+
+void AcquireMutex(const wchar_t* name)
+{
+	HANDLE h = CreateMutexW(NULL, TRUE, name);
+	if (h)
+	{
+		g_Mutexes.push_back(h);
+		std::wcout << L"[OK] Acquired mutex: " << name << L"\n";
+	}
+	else
+	{
+		std::wcout << L"[FAIL] Could not acquire mutex: " << name << L"\n";
+	}
 }
 
 int main()
@@ -39,41 +56,43 @@ int main()
 	SetConsoleCtrlHandler(ConsoleHandler, TRUE);
 	SetConsoleOutputCP(65001);
 
+	// Known Roblox mutexes (official + modern launchers)
 	const wchar_t* mutexNames[] =
 	{
 		L"ROBLOX_singletonMutex",
-		L"ROBLOX_singletonMutex_Legacy",
-		L"ROBLOX_singletonMutex_1"
+		L"RobloxPlayerSingletonMutex",
+		L"RobloxAppSingletonMutex"
 	};
 
 	for (const auto& name : mutexNames)
 	{
-		HANDLE h = CreateMutexW(NULL, TRUE, name);
-		if (h)
-			g_mutexes.push_back(h);
+		AcquireMutex(name);
 	}
 
-	if (g_mutexes.empty())
+	if (g_Mutexes.empty())
 	{
-		std::cout << dye::red("ERROR: Failed to acquire any ROBLOX mutex.") << "\n";
+		std::cout << dye::red("ERROR: Failed to acquire any Roblox mutex.") << "\n";
 		std::cin.get();
 		return 1;
 	}
 
 	std::cout << "\n";
-	std::cout << dye::aqua("================================================") << "\n";
-	std::cout << dye::aqua("|") << dye::white("  MultiRoblox - Ultimate Optimized Edition   ") << dye::aqua("|") << "\n";
-	std::cout << dye::aqua("================================================") << "\n\n";
+	std::cout << dye::aqua("========================================================") << "\n";
+	std::cout << dye::aqua("|") << dye::white("   MultiRoblox - Ultimate Optimized Edition (CLI)   ") << dye::aqua("|") << "\n";
+	std::cout << dye::aqua("========================================================") << "\n\n";
 
-	std::cout << dye::green("[OK] ") << dye::white("ROBLOX mutexes acquired: ")
-	          << dye::aqua(std::to_string(g_mutexes.size())) << "\n";
+	std::cout << dye::green("[OK] ")
+	          << dye::white("Total mutexes acquired: ")
+	          << dye::aqua(std::to_string(g_Mutexes.size())) << "\n";
 
-	std::cout << dye::grey("Status: ") << dye::green("ACTIVE (0% CPU)") << "\n";
-	std::cout << dye::grey("Low-end systems: OPTIMIZED") << "\n\n";
+	std::cout << dye::grey("Status: ") << dye::green("ACTIVE") << "\n";
+	std::cout << dye::grey("CPU Usage: ") << dye::green("0% (Idle Wait)") << "\n";
+	std::cout << dye::grey("Compatibility: ") << dye::green("Official, Fishstrap, Bloxstrap") << "\n\n";
 
-	std::cout << dye::grey("Press Ctrl+C to exit.") << "\n\n";
+	std::cout << dye::grey("Press Ctrl + C to exit.") << "\n\n";
 
-	// 🔥 Absolute zero CPU usage
-	WaitForSingleObject(INVALID_HANDLE_VALUE, INFINITE);
+	// Zero CPU usage – correct infinite sleep
+	Sleep(INFINITE);
+
 	return 0;
 }
